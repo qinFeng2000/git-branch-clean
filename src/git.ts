@@ -18,11 +18,15 @@ export interface BranchInfo {
 
 export interface StaleBranch extends BranchInfo {
   mainBranches: string[];
+  mergedMainBranches: string[];
+  isMerged: boolean;
 }
 
 export interface ScanOptions {
   repoPath: string;
   mainBranches: string[];
+  includeBranchPatterns?: string[];
+  excludeBranchPatterns?: string[];
   staleHours: number;
   now?: Date;
 }
@@ -52,6 +56,8 @@ export class GitCommandError extends Error {
 
 export async function scanStaleBranches(options: ScanOptions): Promise<StaleBranch[]> {
   const requestedMainBranches = normalizeMainBranches(options.mainBranches);
+  const includeBranchPatterns = normalizeBranchPatterns(options.includeBranchPatterns ?? ['*'], ['*']);
+  const excludeBranchPatterns = normalizeBranchPatterns(options.excludeBranchPatterns ?? [], []);
   const staleHours = normalizeStaleHours(options.staleHours);
   const now = options.now ?? new Date();
 
@@ -78,18 +84,30 @@ export async function scanStaleBranches(options: ScanOptions): Promise<StaleBran
       continue;
     }
 
-    const merged = await isBranchMergedIntoAnyMain(options.repoPath, branch.name, existingMainBranches);
+    if (!matchesBranchFilters(branch.name, includeBranchPatterns, excludeBranchPatterns)) {
+      continue;
+    }
+
     const ageMs = now.getTime() - branch.lastCommitDate.getTime();
 
-    if (!merged && ageMs >= staleHours * HOUR_MS) {
-      staleBranches.push({
-        ...branch,
-        mainBranches: existingMainBranches
-      });
+    if (ageMs < staleHours * HOUR_MS) {
+      continue;
     }
+
+    const mergedMainBranches = await getMergedMainBranches(options.repoPath, branch.name, existingMainBranches);
+    staleBranches.push({
+      ...branch,
+      mainBranches: existingMainBranches,
+      mergedMainBranches,
+      isMerged: mergedMainBranches.length > 0
+    });
   }
 
   return staleBranches.sort((left, right) => {
+    if (left.isMerged !== right.isMerged) {
+      return left.isMerged ? -1 : 1;
+    }
+
     return right.ageHours - left.ageHours || left.name.localeCompare(right.name);
   });
 }
@@ -157,11 +175,14 @@ async function listLocalBranches(repoPath: string, currentBranch: string, now: D
     .map((line) => parseBranchLine(line, currentBranch, now));
 }
 
-async function isBranchMergedIntoAnyMain(repoPath: string, branchName: string, mainBranches: string[]): Promise<boolean> {
+async function getMergedMainBranches(repoPath: string, branchName: string, mainBranches: string[]): Promise<string[]> {
+  const mergedMainBranches: string[] = [];
+
   for (const mainBranch of mainBranches) {
     const result = await runGit(repoPath, ['merge-base', '--is-ancestor', branchName, mainBranch]);
     if (result.code === 0) {
-      return true;
+      mergedMainBranches.push(mainBranch);
+      continue;
     }
 
     if (result.code === 1) {
@@ -171,7 +192,7 @@ async function isBranchMergedIntoAnyMain(repoPath: string, branchName: string, m
     throw new GitCommandError(['merge-base', '--is-ancestor', branchName, mainBranch], result);
   }
 
-  return false;
+  return mergedMainBranches;
 }
 
 function parseBranchLine(line: string, currentBranch: string, now: Date): BranchInfo {
@@ -204,6 +225,24 @@ function normalizeStaleHours(staleHours: number): number {
 
 function normalizeMainBranches(mainBranches: string[]): string[] {
   return Array.from(new Set(mainBranches.map((mainBranch) => mainBranch.trim()).filter(Boolean)));
+}
+
+function normalizeBranchPatterns(branchPatterns: string[], fallback: string[]): string[] {
+  const normalizedBranchPatterns = Array.from(new Set(branchPatterns.map((pattern) => pattern.trim()).filter(Boolean)));
+  return normalizedBranchPatterns.length > 0 ? normalizedBranchPatterns : fallback;
+}
+
+function matchesBranchFilters(branchName: string, includeBranchPatterns: string[], excludeBranchPatterns: string[]): boolean {
+  return matchesAnyBranchPattern(branchName, includeBranchPatterns) && !matchesAnyBranchPattern(branchName, excludeBranchPatterns);
+}
+
+function matchesAnyBranchPattern(branchName: string, branchPatterns: string[]): boolean {
+  return branchPatterns.some((pattern) => globToRegExp(pattern).test(branchName));
+}
+
+function globToRegExp(pattern: string): RegExp {
+  const escapedPattern = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escapedPattern}$`);
 }
 
 async function mustRunGit(repoPath: string, args: string[]): Promise<GitResult> {

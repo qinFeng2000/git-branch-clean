@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { deleteLocalBranch, scanStaleBranches, type DeleteBranchResult, type StaleBranch } from './git';
+import { formatBranchAge } from './time';
 
 const COMMAND_CHECK_STALE_BRANCHES = 'gitBranchCleanup.checkStaleBranches';
 
@@ -30,24 +31,28 @@ async function runBranchCleanup(output: vscode.OutputChannel): Promise<void> {
 
   const config = vscode.workspace.getConfiguration('gitBranchCleanup');
   const mainBranches = normalizeMainBranches(config.get<string>('mainBranch', 'main,master'));
+  const includeBranchPatterns = normalizeCommaSeparatedList(config.get<string>('includeBranchPatterns', '*'), ['*']);
+  const excludeBranchPatterns = normalizeCommaSeparatedList(config.get<string>('excludeBranchPatterns', ''), []);
   const staleHours = normalizeStaleHours(config.get<number>('staleHours', 720));
 
   try {
     const branches = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: '正在检查过期未合并分支...',
+        title: '正在检查过期分支...',
         cancellable: false
       },
       () => scanStaleBranches({
         repoPath: workspaceFolder.uri.fsPath,
         mainBranches,
+        includeBranchPatterns,
+        excludeBranchPatterns,
         staleHours
       })
     );
 
     if (branches.length === 0) {
-      void vscode.window.showInformationMessage(`没有发现超过 ${staleHours} 小时且未合并到 ${formatMainBranches(mainBranches)} 的本地分支。`);
+      void vscode.window.showInformationMessage(`没有发现超过 ${staleHours} 小时、匹配 ${formatBranchFilters(includeBranchPatterns, excludeBranchPatterns)} 的本地分支。`);
       return;
     }
 
@@ -64,29 +69,25 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
     ignoreFocusOut: true,
     matchOnDescription: true,
     matchOnDetail: true,
-    placeHolder: '选择要安全删除的本地分支；按 Esc 仅查看后退出',
-    title: `发现 ${branches.length} 个过期且未合并的本地分支`
+    placeHolder: '已合并分支已默认勾选，回车执行安全删除；未合并分支需再次选择',
+    title: `发现 ${branches.length} 个过期本地分支`
   });
 
   if (!selected || selected.length === 0) {
     return;
   }
 
-  const deletableItems = selected.filter((item) => item.deletable);
+  const selectedDeletableItems = selected.filter((item) => item.deletable);
   const skippedItems = selected.filter((item) => !item.deletable);
+  const mergedItems = selectedDeletableItems.filter((item) => item.branch.isMerged);
+  const selectedUnmergedItems = selectedDeletableItems.filter((item) => !item.branch.isMerged);
+  const confirmedUnmergedItems = selectedUnmergedItems.length > 0 ? await showUnmergedBranchPicker(selectedUnmergedItems) : [];
+  const deletableItems = [...mergedItems, ...confirmedUnmergedItems];
+  const unconfirmedUnmergedCount = selectedUnmergedItems.length - confirmedUnmergedItems.length;
 
   if (deletableItems.length === 0) {
-    void vscode.window.showWarningMessage('所选分支均不可删除。当前所在分支需要先切换到其他分支后再清理。');
-    return;
-  }
-
-  const confirmed = await vscode.window.showWarningMessage(
-    `将执行 git branch -d 安全删除 ${deletableItems.length} 个本地分支。Git 可能会拒绝删除尚未完全合并的分支。`,
-    { modal: true },
-    '删除'
-  );
-
-  if (confirmed !== '删除') {
+    const skippedText = skippedItems.length > 0 ? '当前所在分支需要先切换到其他分支后再清理。' : '未选择可删除分支。';
+    void vscode.window.showWarningMessage(skippedText);
     return;
   }
 
@@ -98,15 +99,16 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
   const successCount = results.filter((result) => result.success).length;
   const failedResults = results.filter((result) => !result.success);
   const skippedText = skippedItems.length > 0 ? `，跳过 ${skippedItems.length} 个不可删除分支` : '';
+  const unconfirmedText = unconfirmedUnmergedCount > 0 ? `，未确认 ${unconfirmedUnmergedCount} 个未合并分支` : '';
 
   if (failedResults.length === 0) {
-    void vscode.window.showInformationMessage(`分支清理完成：成功删除 ${successCount} 个${skippedText}。`);
+    void vscode.window.showInformationMessage(`分支清理完成：成功删除 ${successCount} 个${skippedText}${unconfirmedText}。`);
     return;
   }
 
   writeDeleteFailures(output, results, skippedItems);
   const action = await vscode.window.showWarningMessage(
-    `分支清理完成：成功 ${successCount} 个，失败 ${failedResults.length} 个${skippedText}。`,
+    `分支清理完成：成功 ${successCount} 个，失败 ${failedResults.length} 个${skippedText}${unconfirmedText}。`,
     '查看详情'
   );
 
@@ -115,14 +117,35 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
   }
 }
 
+async function showUnmergedBranchPicker(items: BranchQuickPickItem[]): Promise<BranchQuickPickItem[]> {
+  const confirmItems = items.map((item) => ({
+    ...item,
+    picked: false,
+    detail: `${item.detail ?? ''} · 再次选择后才会执行 git branch -d`
+  }));
+
+  const selected = await vscode.window.showQuickPick(confirmItems, {
+    canPickMany: true,
+    ignoreFocusOut: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+    placeHolder: '这些分支未合并到主分支；再次选择才会进入删除',
+    title: '确认未合并分支'
+  });
+
+  return selected ?? [];
+}
+
 function toQuickPickItem(branch: StaleBranch): BranchQuickPickItem {
   const dateText = formatDate(branch.lastCommitDate);
   const currentText = branch.isCurrent ? ' · 当前分支不可删除' : '';
+  const mergedText = branch.isMerged ? `已合并到 ${formatMainBranches(branch.mergedMainBranches)}` : `未合并到 ${formatMainBranches(branch.mainBranches)}`;
 
   return {
     label: `$(git-branch) ${branch.name}`,
-    description: `${branch.ageHours} 小时前 · ${branch.shortHash}`,
-    detail: `最后提交 ${dateText} · 未合并到 ${formatMainBranches(branch.mainBranches)}${currentText}`,
+    description: `${formatBranchAge(branch.ageHours)} · ${branch.shortHash}`,
+    detail: `最后提交 ${dateText} · ${mergedText}${currentText}`,
+    picked: branch.isMerged && !branch.isCurrent,
     branch,
     deletable: !branch.isCurrent
   };
@@ -165,8 +188,12 @@ function getTargetWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
 }
 
 function normalizeMainBranches(value: string): string[] {
-  const mainBranches = Array.from(new Set(value.split(',').map((mainBranch) => mainBranch.trim()).filter(Boolean)));
-  return mainBranches.length > 0 ? mainBranches : ['main', 'master'];
+  return normalizeCommaSeparatedList(value, ['main', 'master']);
+}
+
+function normalizeCommaSeparatedList(value: string, fallback: string[]): string[] {
+  const values = Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)));
+  return values.length > 0 ? values : fallback;
 }
 
 function normalizeStaleHours(value: number): number {
@@ -187,6 +214,14 @@ function formatDate(date: Date): string {
 
 function formatMainBranches(mainBranches: string[]): string {
   return mainBranches.join(', ');
+}
+
+function formatBranchFilters(includeBranchPatterns: string[], excludeBranchPatterns: string[]): string {
+  if (excludeBranchPatterns.length === 0) {
+    return `include: ${includeBranchPatterns.join(', ')}`;
+  }
+
+  return `include: ${includeBranchPatterns.join(', ')} / exclude: ${excludeBranchPatterns.join(', ')}`;
 }
 
 function toUserMessage(error: unknown): string {

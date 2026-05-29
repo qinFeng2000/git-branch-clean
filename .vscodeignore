@@ -1,6 +1,10 @@
 .vscode/**
 test/**
 src/**
+dist/test/**
+dist/**/*.map
 tsconfig.json
 pnpm-lock.yaml
 *.map
+*.vsix
+.gitignore

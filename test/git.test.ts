@@ -10,7 +10,7 @@ import { deleteLocalBranch, scanStaleBranches } from '../src/git';
 const execFileAsync = promisify(execFile);
 const NOW = new Date('2026-05-29T00:00:00.000Z');
 
-test('只返回过期且未合并到主分支的本地分支', async () => {
+test('返回过期分支并标记是否已合并到主分支', async () => {
   const repo = await createRepo('main');
 
   try {
@@ -36,8 +36,11 @@ test('只返回过期且未合并到主分支的本地分支', async () => {
       now: NOW
     });
 
-    assert.deepEqual(branches.map((branch) => branch.name), ['stale-unmerged']);
-    assert.equal(branches[0]?.ageHours, 45 * 24);
+    assert.deepEqual(branches.map((branch) => branch.name), ['merged-old', 'stale-unmerged']);
+    assert.equal(branches[0]?.isMerged, true);
+    assert.deepEqual(branches[0]?.mergedMainBranches, ['main']);
+    assert.equal(branches[1]?.isMerged, false);
+    assert.equal(branches[1]?.ageHours, 45 * 24);
     assert.equal(branches[0]?.isCurrent, false);
   } finally {
     await removeRepo(repo);
@@ -131,7 +134,7 @@ test('主分支不存在时给出明确错误', async () => {
   }
 });
 
-test('支持多个主分支，合入任意存在主分支即不提示', async () => {
+test('支持多个主分支，并标记合入任意存在主分支的分支', async () => {
   const repo = await createRepo('main');
 
   try {
@@ -155,8 +158,11 @@ test('支持多个主分支，合入任意存在主分支即不提示', async ()
       now: NOW
     });
 
-    assert.deepEqual(branches.map((branch) => branch.name), ['stale-unmerged-multi']);
+    assert.deepEqual(branches.map((branch) => branch.name), ['merged-to-master', 'stale-unmerged-multi']);
     assert.deepEqual(branches[0]?.mainBranches, ['main', 'master']);
+    assert.deepEqual(branches[0]?.mergedMainBranches, ['master']);
+    assert.equal(branches[0]?.isMerged, true);
+    assert.equal(branches[1]?.isMerged, false);
   } finally {
     await removeRepo(repo);
   }
@@ -176,6 +182,67 @@ test('配置多个主分支时允许部分主分支不存在', async () => {
     });
 
     assert.deepEqual(branches, []);
+  } finally {
+    await removeRepo(repo);
+  }
+});
+
+test('支持按 include 分支模式过滤检查范围', async () => {
+  const repo = await createRepo('main');
+
+  try {
+    await commitFile(repo, 'base.txt', 'base', 'base', daysAgo(120));
+
+    await git(repo, ['checkout', '-b', 'chore/old-cleanup']);
+    await commitFile(repo, 'chore-old.txt', 'chore', 'chore branch', daysAgo(50));
+    await git(repo, ['checkout', 'main']);
+
+    await git(repo, ['checkout', '-b', 'feature/old-work']);
+    await commitFile(repo, 'feature-old.txt', 'feature', 'feature branch', daysAgo(60));
+    await git(repo, ['checkout', 'main']);
+
+    const branches = await scanStaleBranches({
+      repoPath: repo,
+      mainBranches: ['main'],
+      includeBranchPatterns: ['chore/*'],
+      staleHours: 720,
+      now: NOW
+    });
+
+    assert.deepEqual(branches.map((branch) => branch.name), ['chore/old-cleanup']);
+  } finally {
+    await removeRepo(repo);
+  }
+});
+
+test('支持按 exclude 分支模式排除检查范围', async () => {
+  const repo = await createRepo('main');
+
+  try {
+    await commitFile(repo, 'base.txt', 'base', 'base', daysAgo(120));
+
+    await git(repo, ['checkout', '-b', 'chore/old-cleanup']);
+    await commitFile(repo, 'chore-old.txt', 'chore', 'chore branch', daysAgo(50));
+    await git(repo, ['checkout', 'main']);
+
+    await git(repo, ['checkout', '-b', 'chore/keep-docs']);
+    await commitFile(repo, 'chore-keep.txt', 'keep', 'keep branch', daysAgo(60));
+    await git(repo, ['checkout', 'main']);
+
+    await git(repo, ['checkout', '-b', 'feature/old-work']);
+    await commitFile(repo, 'feature-old.txt', 'feature', 'feature branch', daysAgo(70));
+    await git(repo, ['checkout', 'main']);
+
+    const branches = await scanStaleBranches({
+      repoPath: repo,
+      mainBranches: ['main'],
+      includeBranchPatterns: ['chore/*', 'feature/old-work'],
+      excludeBranchPatterns: ['chore/keep-*'],
+      staleHours: 720,
+      now: NOW
+    });
+
+    assert.deepEqual(branches.map((branch) => branch.name), ['feature/old-work', 'chore/old-cleanup']);
   } finally {
     await removeRepo(repo);
   }

@@ -1,9 +1,12 @@
 {
   "name": "git-branch-cleanup",
   "displayName": "Git Branch Cleanup",
-  "description": "检查并清理长期未合并到主分支的本地 Git 分支。",
-  "version": "0.0.1",
-  "publisher": "local",
+  "description": "检查并清理长期未处理的本地 Git 分支。",
+  "version": "0.1.1",
+  "publisher": "git-branch-clean",
+  "license": "GPL-3.0-only",
+  "repository": "https://github.com/qinFeng2000/git-branch-clean",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -18,7 +21,7 @@
     "commands": [
       {
         "command": "gitBranchCleanup.checkStaleBranches",
-        "title": "Git Branch Cleanup: 检查过期未合并分支",
+        "title": "Git Branch Cleanup: 检查过期分支",
         "category": "Git Branch Cleanup"
       }
     ],
@@ -43,6 +46,16 @@
           "default": 720,
           "minimum": 1,
           "description": "分支最后提交达到或超过多少小时后提示清理。"
+        },
+        "gitBranchCleanup.includeBranchPatterns": {
+          "type": "string",
+          "default": "*",
+          "description": "要检查的本地分支模式，多个模式用英文逗号分隔，支持 * 通配符，例如 chore/*。"
+        },
+        "gitBranchCleanup.excludeBranchPatterns": {
+          "type": "string",
+          "default": "",
+          "description": "要排除的本地分支模式，多个模式用英文逗号分隔，支持 * 通配符，例如 release/*。"
         }
       }
     }
@@ -51,11 +64,13 @@
     "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "pnpm run compile && node --test dist/test"
+    "test": "pnpm run compile && node --test dist/test",
+    "package:vsix": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
     "@types/vscode": "1.90.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vsce": "^2.15.0"
   }
 }
