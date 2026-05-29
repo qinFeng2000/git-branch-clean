@@ -4,6 +4,12 @@
 
 Git Branch Cleanup 是一个 VS Code 插件，用于检查并安全清理当前工作区里的过期本地 Git 分支。
 
+从 Visual Studio Marketplace 安装：
+
+[点击打开 Git Branch Cleanup 市场页面](https://marketplace.visualstudio.com/items?itemName=git-branch-clean.git-branch-cleanup)
+
+打开链接后点击 **Install**，即可在 VS Code 中直接使用。
+
 插件会检查最后提交时间达到过期阈值的本地分支，展示它们是否已经合并到配置的主分支，并允许你通过 `git branch -d` 安全删除选中的分支。
 
 ## 功能

@@ -4,6 +4,12 @@
 
 Git Branch Cleanup is a VS Code extension for finding and safely cleaning up stale local Git branches in the current workspace.
 
+Install from Visual Studio Marketplace:
+
+[Open Git Branch Cleanup in Marketplace](https://marketplace.visualstudio.com/items?itemName=git-branch-clean.git-branch-cleanup)
+
+Open the link, click **Install**, and start using the command in VS Code.
+
 It checks local branches whose latest commit age reaches the configured threshold, shows whether each branch has already been merged into your configured main branches, and lets you safely delete selected branches with `git branch -d`.
 
 ## Features
