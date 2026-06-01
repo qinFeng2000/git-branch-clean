@@ -12,6 +12,8 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
 
 插件会检查最后提交时间达到过期阈值的本地分支，展示它们是否已经合并到配置的主分支，并允许你通过 `git branch -d` 安全删除选中的分支。
 
+版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 功能
 
 - 通过命令面板运行：`Git Branch Clean: 检查过期分支`
@@ -22,9 +24,10 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
 - 支持多个主分支名称，使用英文逗号分隔。默认：`main,master`
 - 过期阈值按小时配置。默认：`720` 小时，也就是 30 天
 - 已合并到主分支的过期分支会在 Quick Pick 中默认勾选，按回车即可安全删除
-- 未合并到主分支的过期分支需要在第二个 Quick Pick 中再次选择
+- 未合并到主分支的过期分支需要第二个 Quick Pick 确认，但不用再次勾选
 - 支持 include/exclude 分支模式，并支持 `*` 通配符
-- 只执行安全删除：`git branch -d -- <branch>`，不会使用 `git branch -D`
+- 优先执行安全删除：`git branch -d -- <branch>`
+- 安全删除失败后，会询问是否对失败分支执行强制删除：`git branch -D -- <branch>`
 
 ## 设置
 
@@ -79,13 +82,19 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
 
 ## 删除策略
 
-插件只执行 Git 的安全删除命令：
+插件总是优先执行 Git 的安全删除命令：
 
 ```bash
 git branch -d -- <branch>
 ```
 
-如果 Git 拒绝删除某个分支，通常是因为 Git 不认为该分支已经完全合并，插件会展示失败详情。插件不会强制删除分支。
+如果 Git 拒绝删除某个分支，通常是因为 Git 不认为该分支已经完全合并，插件会提示是否只对这些失败分支执行强制删除：
+
+```bash
+git branch -D -- <branch>
+```
+
+强制删除只会在你明确确认后执行。
 
 ## 开发
 

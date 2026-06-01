@@ -113,6 +113,30 @@ export async function scanStaleBranches(options: ScanOptions): Promise<StaleBran
 }
 
 export async function deleteLocalBranch(repoPath: string, branchName: string): Promise<DeleteBranchResult> {
+  return deleteBranch(repoPath, branchName, {
+    args: ['branch', '-d', '--'],
+    successMessage: (name) => `已删除分支 ${name}。`,
+    failureMessage: (name) => `无法安全删除分支 ${name}。Git 拒绝删除，可能因为该分支尚未完全合并。`
+  });
+}
+
+export async function forceDeleteLocalBranch(repoPath: string, branchName: string): Promise<DeleteBranchResult> {
+  return deleteBranch(repoPath, branchName, {
+    args: ['branch', '-D', '--'],
+    successMessage: (name) => `已强制删除分支 ${name}。`,
+    failureMessage: (name) => `无法强制删除分支 ${name}。`
+  });
+}
+
+async function deleteBranch(
+  repoPath: string,
+  branchName: string,
+  options: {
+    args: string[];
+    successMessage: (branchName: string) => string;
+    failureMessage: (branchName: string) => string;
+  }
+): Promise<DeleteBranchResult> {
   const trimmedBranchName = branchName.trim();
 
   if (!trimmedBranchName) {
@@ -132,19 +156,19 @@ export async function deleteLocalBranch(repoPath: string, branchName: string): P
     };
   }
 
-  const result = await runGit(repoPath, ['branch', '-d', '--', trimmedBranchName]);
+  const result = await runGit(repoPath, [...options.args, trimmedBranchName]);
   if (result.code === 0) {
     return {
       branchName: trimmedBranchName,
       success: true,
-      message: `已删除分支 ${trimmedBranchName}。`
+      message: options.successMessage(trimmedBranchName)
     };
   }
 
   return {
     branchName: trimmedBranchName,
     success: false,
-    message: `无法安全删除分支 ${trimmedBranchName}。Git 拒绝删除，可能因为该分支尚未完全合并。`,
+    message: options.failureMessage(trimmedBranchName),
     stderr: result.stderr.trim() || result.stdout.trim()
   };
 }

@@ -1,4 +1,6 @@
 .vscode/**
+.idea/**
+.pnpm-store/**
 test/**
 src/**
 dist/test/**

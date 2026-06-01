@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { deleteLocalBranch, scanStaleBranches } from '../src/git';
+import { deleteLocalBranch, forceDeleteLocalBranch, scanStaleBranches } from '../src/git';
 
 const execFileAsync = promisify(execFile);
 const NOW = new Date('2026-05-29T00:00:00.000Z');
@@ -109,6 +109,45 @@ test('安全删除未合并分支失败时返回可读结果', async () => {
     assert.equal(result.success, false);
     assert.match(result.message, /无法安全删除分支 unsafe-delete/);
     assert.ok(result.stderr);
+  } finally {
+    await removeRepo(repo);
+  }
+});
+
+test('强制删除可以删除安全删除失败的未合并分支', async () => {
+  const repo = await createRepo('main');
+
+  try {
+    await commitFile(repo, 'base.txt', 'base', 'base', daysAgo(100));
+    await git(repo, ['checkout', '-b', 'force-delete']);
+    await commitFile(repo, 'force.txt', 'force', 'force branch', daysAgo(60));
+    await git(repo, ['checkout', 'main']);
+
+    const safeResult = await deleteLocalBranch(repo, 'force-delete');
+    assert.equal(safeResult.success, false);
+
+    const forceResult = await forceDeleteLocalBranch(repo, 'force-delete');
+    assert.equal(forceResult.success, true);
+    assert.match(forceResult.message, /已强制删除分支 force-delete/);
+
+    const branches = await git(repo, ['branch', '--list', 'force-delete']);
+    assert.equal(branches.trim(), '');
+  } finally {
+    await removeRepo(repo);
+  }
+});
+
+test('强制删除仍然不能删除当前分支', async () => {
+  const repo = await createRepo('main');
+
+  try {
+    await commitFile(repo, 'base.txt', 'base', 'base', daysAgo(100));
+    await git(repo, ['checkout', '-b', 'current-force-delete']);
+    await commitFile(repo, 'current-force.txt', 'current force', 'current force branch', daysAgo(60));
+
+    const result = await forceDeleteLocalBranch(repo, 'current-force-delete');
+    assert.equal(result.success, false);
+    assert.match(result.message, /不能删除当前所在分支/);
   } finally {
     await removeRepo(repo);
   }

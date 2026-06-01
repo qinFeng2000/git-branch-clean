@@ -12,6 +12,8 @@ Open the link, click **Install**, and start using the command in VS Code.
 
 It checks local branches whose latest commit age reaches the configured threshold, shows whether each branch has already been merged into your configured main branches, and lets you safely delete selected branches with `git branch -d`.
 
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Features
 
 - Run from the Command Palette: `Git Branch Clean: 检查过期分支`
@@ -22,9 +24,10 @@ It checks local branches whose latest commit age reaches the configured threshol
 - Supports multiple main branch names, separated by commas. Default: `main,master`
 - Configurable stale threshold in hours. Default: `720` hours, equal to 30 days.
 - Merged stale branches are preselected in Quick Pick, so pressing Enter safely deletes them.
-- Unmerged stale branches require a second Quick Pick confirmation before deletion.
+- Unmerged stale branches require a second Quick Pick confirmation, without selecting the same branches again.
 - Supports include and exclude branch patterns with `*` wildcards.
-- Uses safe deletion only: `git branch -d -- <branch>`. It never uses `git branch -D`.
+- Uses safe deletion first: `git branch -d -- <branch>`.
+- If safe deletion fails, it asks before force deleting failed branches with `git branch -D -- <branch>`.
 
 ## Settings
 
@@ -79,13 +82,19 @@ Default:
 
 ## Cleanup Behavior
 
-The extension only runs Git's safe delete command:
+The extension always tries Git's safe delete command first:
 
 ```bash
 git branch -d -- <branch>
 ```
 
-If Git refuses to delete a branch, usually because it is not considered fully merged, the extension reports the failure details. It does not force-delete branches.
+If Git refuses to delete a branch, usually because it is not considered fully merged, the extension shows the failure and asks whether to force delete only those failed branches:
+
+```bash
+git branch -D -- <branch>
+```
+
+Force delete only runs after explicit confirmation.
 
 ## Development
 

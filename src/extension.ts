@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { deleteLocalBranch, scanStaleBranches, type DeleteBranchResult, type StaleBranch } from './git';
+import { deleteLocalBranch, forceDeleteLocalBranch, scanStaleBranches, type DeleteBranchResult, type StaleBranch } from './git';
 import { formatBranchAge } from './time';
 
 const COMMAND_CHECK_STALE_BRANCHES = 'gitBranchCleanup.checkStaleBranches';
@@ -69,7 +69,7 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
     ignoreFocusOut: true,
     matchOnDescription: true,
     matchOnDetail: true,
-    placeHolder: '已合并分支已默认勾选，回车执行安全删除；未合并分支需再次选择',
+    placeHolder: '已合并分支已默认勾选，回车执行安全删除；未合并分支会追加一次确认',
     title: `发现 ${branches.length} 个过期本地分支`
   });
 
@@ -91,13 +91,13 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
     return;
   }
 
-  const results: DeleteBranchResult[] = [];
+  const safeResults: DeleteBranchResult[] = [];
   for (const item of deletableItems) {
-    results.push(await deleteLocalBranch(repoPath, item.branch.name));
+    safeResults.push(await deleteLocalBranch(repoPath, item.branch.name));
   }
 
-  const successCount = results.filter((result) => result.success).length;
-  const failedResults = results.filter((result) => !result.success);
+  const successCount = safeResults.filter((result) => result.success).length;
+  const failedResults = safeResults.filter((result) => !result.success);
   const skippedText = skippedItems.length > 0 ? `，跳过 ${skippedItems.length} 个不可删除分支` : '';
   const unconfirmedText = unconfirmedUnmergedCount > 0 ? `，未确认 ${unconfirmedUnmergedCount} 个未合并分支` : '';
 
@@ -106,34 +106,76 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
     return;
   }
 
-  writeDeleteFailures(output, results, skippedItems);
-  const action = await vscode.window.showWarningMessage(
-    `分支清理完成：成功 ${successCount} 个，失败 ${failedResults.length} 个${skippedText}${unconfirmedText}。`,
+  writeDeleteReport(output, safeResults, skippedItems);
+  const forceAction = await vscode.window.showWarningMessage(
+    `安全删除完成：成功 ${successCount} 个，失败 ${failedResults.length} 个${skippedText}${unconfirmedText}。是否强制删除失败分支？`,
+    {
+      modal: true,
+      detail: `强制删除会执行 git branch -D -- <branch>，可能丢失未合并提交。失败分支：${formatBranchNameList(failedResults.map((result) => result.branchName))}`
+    },
+    '强制删除',
     '查看详情'
   );
 
-  if (action === '查看详情') {
+  if (forceAction === '查看详情') {
+    output.show(true);
+    return;
+  }
+
+  if (forceAction !== '强制删除') {
+    return;
+  }
+
+  const forceResults: DeleteBranchResult[] = [];
+  for (const result of failedResults) {
+    forceResults.push(await forceDeleteLocalBranch(repoPath, result.branchName));
+  }
+
+  writeDeleteReport(output, safeResults, skippedItems, forceResults);
+  const forceSuccessCount = forceResults.filter((result) => result.success).length;
+  const forceFailedResults = forceResults.filter((result) => !result.success);
+
+  if (forceFailedResults.length === 0) {
+    void vscode.window.showInformationMessage(`强制删除完成：成功删除 ${forceSuccessCount} 个分支。`);
+    return;
+  }
+
+  const detailAction = await vscode.window.showWarningMessage(
+    `强制删除完成：成功 ${forceSuccessCount} 个，失败 ${forceFailedResults.length} 个。`,
+    '查看详情'
+  );
+
+  if (detailAction === '查看详情') {
     output.show(true);
   }
 }
 
 async function showUnmergedBranchPicker(items: BranchQuickPickItem[]): Promise<BranchQuickPickItem[]> {
-  const confirmItems = items.map((item) => ({
-    ...item,
-    picked: false,
-    detail: `${item.detail ?? ''} · 再次选择后才会执行 git branch -d`
-  }));
+  const selected = await vscode.window.showQuickPick(
+    [
+      {
+        label: `$(warning) 确认删除 ${items.length} 个未合并分支`,
+        description: '继续使用 git branch -d 安全删除',
+        detail: formatBranchNameList(items.map((item) => item.branch.name)),
+        confirm: true
+      },
+      {
+        label: '取消',
+        description: '不删除这些未合并分支',
+        detail: formatBranchNameList(items.map((item) => item.branch.name)),
+        confirm: false
+      }
+    ],
+    {
+      ignoreFocusOut: true,
+      matchOnDescription: true,
+      matchOnDetail: true,
+      placeHolder: '这些分支未合并到主分支；按回车确认继续，或选择取消',
+      title: '确认未合并分支'
+    }
+  );
 
-  const selected = await vscode.window.showQuickPick(confirmItems, {
-    canPickMany: true,
-    ignoreFocusOut: true,
-    matchOnDescription: true,
-    matchOnDetail: true,
-    placeHolder: '这些分支未合并到主分支；再次选择才会进入删除',
-    title: '确认未合并分支'
-  });
-
-  return selected ?? [];
+  return selected?.confirm ? items : [];
 }
 
 function toQuickPickItem(branch: StaleBranch): BranchQuickPickItem {
@@ -151,7 +193,12 @@ function toQuickPickItem(branch: StaleBranch): BranchQuickPickItem {
   };
 }
 
-function writeDeleteFailures(output: vscode.OutputChannel, results: DeleteBranchResult[], skippedItems: BranchQuickPickItem[]): void {
+function writeDeleteReport(
+  output: vscode.OutputChannel,
+  safeResults: DeleteBranchResult[],
+  skippedItems: BranchQuickPickItem[],
+  forceResults: DeleteBranchResult[] = []
+): void {
   output.clear();
   output.appendLine('Git Branch Cleanup 删除结果');
   output.appendLine('');
@@ -161,6 +208,19 @@ function writeDeleteFailures(output: vscode.OutputChannel, results: DeleteBranch
     output.appendLine('  当前所在分支不可删除。');
   }
 
+  appendDeleteResults(output, '安全删除', safeResults);
+
+  if (forceResults.length > 0) {
+    appendDeleteResults(output, '强制删除', forceResults);
+  }
+}
+
+function appendDeleteResults(output: vscode.OutputChannel, title: string, results: DeleteBranchResult[]): void {
+  if (results.length === 0) {
+    return;
+  }
+
+  output.appendLine(title);
   for (const result of results) {
     output.appendLine(`${result.success ? 'OK' : 'FAIL'} ${result.branchName}`);
     output.appendLine(`  ${result.message}`);
@@ -168,6 +228,7 @@ function writeDeleteFailures(output: vscode.OutputChannel, results: DeleteBranch
       output.appendLine(`  ${result.stderr}`);
     }
   }
+  output.appendLine('');
 }
 
 function getTargetWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
@@ -222,6 +283,13 @@ function formatBranchFilters(includeBranchPatterns: string[], excludeBranchPatte
   }
 
   return `include: ${includeBranchPatterns.join(', ')} / exclude: ${excludeBranchPatterns.join(', ')}`;
+}
+
+function formatBranchNameList(branchNames: string[]): string {
+  const visibleBranchNames = branchNames.slice(0, 8);
+  const remainingCount = branchNames.length - visibleBranchNames.length;
+  const suffix = remainingCount > 0 ? ` 等 ${branchNames.length} 个` : '';
+  return `${visibleBranchNames.join(', ')}${suffix}`;
 }
 
 function toUserMessage(error: unknown): string {
