@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v0.1.5'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release_tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches package version
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_TAG="${{ steps.release_tag.outputs.tag }}"
+
+          if [ "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]; then
+            echo "Release tag $RELEASE_TAG does not match package version v$PACKAGE_VERSION."
+            exit 1
+          fi
+
+      - name: Test
+        run: pnpm test
+
+      - name: Package VSIX
+        run: pnpm run package:vsix
+
+      - name: Resolve VSIX package
+        id: vsix
+        run: |
+          VSIX_PATH="$(find . -maxdepth 1 -name '*.vsix' -print -quit)"
+
+          if [ -z "$VSIX_PATH" ]; then
+            echo "VSIX package was not generated."
+            exit 1
+          fi
+
+          echo "path=$VSIX_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          VSIX_PATH: ${{ steps.vsix.outputs.path }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$VSIX_PATH" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$VSIX_PATH" --title "$RELEASE_TAG" --generate-notes
+          fi

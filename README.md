@@ -118,3 +118,18 @@ pnpm run package:vsix
 ```
 
 Press `F5` in VS Code to start an Extension Development Host for manual testing.
+
+## Release
+
+GitHub Releases are published by `.github/workflows/release.yml`.
+
+1. Update `package.json` version and `CHANGELOG.md`.
+2. Commit the release changes.
+3. Create and push a matching tag:
+
+```bash
+git tag v0.1.5
+git push origin v0.1.5
+```
+
+The workflow verifies that the tag matches the package version, runs tests, packages the extension, and uploads the generated VSIX to the GitHub Release.

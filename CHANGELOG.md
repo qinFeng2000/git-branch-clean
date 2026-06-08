@@ -2,6 +2,13 @@
 
 All notable changes to Git Branch Clean are documented in this file.
 
+## 0.1.5 - 2026-06-08
+
+### Added
+
+- Added a GitHub Actions release workflow that builds, tests, packages, and publishes a GitHub Release for matching version tags.
+- Added release instructions to the English and Simplified Chinese README files.
+
 ## 0.1.4 - 2026-06-08
 
 ### Added

@@ -118,3 +118,18 @@ pnpm run package:vsix
 ```
 
 在 VS Code 中按 `F5` 可以启动 Extension Development Host 进行手动验证。
+
+## Release 发布
+
+GitHub Release 由 `.github/workflows/release.yml` 自动发布。
+
+1. 更新 `package.json` 版本号和 `CHANGELOG.md`
+2. 提交发布相关改动
+3. 创建并推送匹配版本号的 tag：
+
+```bash
+git tag v0.1.5
+git push origin v0.1.5
+```
+
+工作流会校验 tag 与插件版本号是否一致，运行测试，打包扩展，并把生成的 VSIX 上传到 GitHub Release。
