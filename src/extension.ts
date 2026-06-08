@@ -33,13 +33,14 @@ async function runBranchCleanup(output: vscode.OutputChannel): Promise<void> {
   const mainBranches = normalizeMainBranches(config.get<string>('mainBranch', 'main,master'));
   const includeBranchPatterns = normalizeCommaSeparatedList(config.get<string>('includeBranchPatterns', '*'), ['*']);
   const excludeBranchPatterns = normalizeCommaSeparatedList(config.get<string>('excludeBranchPatterns', ''), []);
+  const fetchRemoteBeforeScan = config.get<boolean>('fetchRemoteBeforeScan', false);
   const staleHours = normalizeStaleHours(config.get<number>('staleHours', 720));
 
   try {
     const branches = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: '正在检查过期分支...',
+        title: fetchRemoteBeforeScan ? '正在拉取远程主分支并检查可清理分支...' : '正在检查可清理分支...',
         cancellable: false
       },
       () => scanStaleBranches({
@@ -47,12 +48,13 @@ async function runBranchCleanup(output: vscode.OutputChannel): Promise<void> {
         mainBranches,
         includeBranchPatterns,
         excludeBranchPatterns,
+        fetchRemoteBeforeScan,
         staleHours
       })
     );
 
     if (branches.length === 0) {
-      void vscode.window.showInformationMessage(`没有发现超过 ${staleHours} 小时、匹配 ${formatBranchFilters(includeBranchPatterns, excludeBranchPatterns)} 的本地分支。`);
+      void vscode.window.showInformationMessage(`没有发现已合并主分支，或超过 ${staleHours} 小时且匹配 ${formatBranchFilters(includeBranchPatterns, excludeBranchPatterns)} 的本地分支。`);
       return;
     }
 
@@ -70,7 +72,7 @@ async function showBranchPicker(repoPath: string, branches: StaleBranch[], outpu
     matchOnDescription: true,
     matchOnDetail: true,
     placeHolder: '已合并分支已默认勾选，回车执行安全删除；未合并分支会追加一次确认',
-    title: `发现 ${branches.length} 个过期本地分支`
+    title: `发现 ${branches.length} 个可清理本地分支`
   });
 
   if (!selected || selected.length === 0) {

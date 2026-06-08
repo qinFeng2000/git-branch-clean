@@ -2,6 +2,19 @@
 
 All notable changes to Git Branch Clean are documented in this file.
 
+## 0.1.4 - 2026-06-08
+
+### Added
+
+- Added `gitBranchCleanup.fetchRemoteBeforeScan` to optionally run `git fetch --all --prune` before scanning.
+- Added remote main branch refs, such as `origin/main`, to merge detection when remote fetching is enabled.
+
+### Changed
+
+- Merged branches are now shown regardless of the stale-hours threshold.
+- Unmerged branches still require the configured stale-hours threshold before being shown.
+- Updated README documentation for merged-branch cleanup and remote main branch comparison.
+
 ## 0.1.3 - 2026-06-01
 
 ### Added

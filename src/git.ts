@@ -22,11 +22,18 @@ export interface StaleBranch extends BranchInfo {
   isMerged: boolean;
 }
 
+interface MainBranchRef {
+  displayName: string;
+  refName: string;
+  localName?: string;
+}
+
 export interface ScanOptions {
   repoPath: string;
   mainBranches: string[];
   includeBranchPatterns?: string[];
   excludeBranchPatterns?: string[];
+  fetchRemoteBeforeScan?: boolean;
   staleHours: number;
   now?: Date;
 }
@@ -67,20 +74,23 @@ export async function scanStaleBranches(options: ScanOptions): Promise<StaleBran
 
   await assertGitRepository(options.repoPath);
 
+  if (options.fetchRemoteBeforeScan) {
+    await fetchRemoteRefs(options.repoPath);
+  }
+
   const currentBranch = await getCurrentBranch(options.repoPath);
   const branches = await listLocalBranches(options.repoPath, currentBranch, now);
-  const existingMainBranches = requestedMainBranches.filter((mainBranch) => {
-    return branches.some((branch) => branch.name === mainBranch);
-  });
+  const mainBranchRefs = await getMainBranchRefs(options.repoPath, branches, requestedMainBranches, options.fetchRemoteBeforeScan === true);
+  const localMainBranchNames = new Set(mainBranchRefs.map((branchRef) => branchRef.localName).filter(isDefined));
 
-  if (existingMainBranches.length === 0) {
+  if (mainBranchRefs.length === 0) {
     throw new Error(`找不到主分支 ${requestedMainBranches.join(', ')}。请检查 gitBranchCleanup.mainBranch 设置。`);
   }
 
   const staleBranches: StaleBranch[] = [];
 
   for (const branch of branches) {
-    if (existingMainBranches.includes(branch.name)) {
+    if (localMainBranchNames.has(branch.name)) {
       continue;
     }
 
@@ -89,15 +99,16 @@ export async function scanStaleBranches(options: ScanOptions): Promise<StaleBran
     }
 
     const ageMs = now.getTime() - branch.lastCommitDate.getTime();
+    const isStale = ageMs >= staleHours * HOUR_MS;
+    const mergedMainBranches = await getMergedMainBranches(options.repoPath, branch.name, mainBranchRefs);
 
-    if (ageMs < staleHours * HOUR_MS) {
+    if (mergedMainBranches.length === 0 && !isStale) {
       continue;
     }
 
-    const mergedMainBranches = await getMergedMainBranches(options.repoPath, branch.name, existingMainBranches);
     staleBranches.push({
       ...branch,
-      mainBranches: existingMainBranches,
+      mainBranches: mainBranchRefs.map((mainBranchRef) => mainBranchRef.displayName),
       mergedMainBranches,
       isMerged: mergedMainBranches.length > 0
     });
@@ -199,13 +210,88 @@ async function listLocalBranches(repoPath: string, currentBranch: string, now: D
     .map((line) => parseBranchLine(line, currentBranch, now));
 }
 
-async function getMergedMainBranches(repoPath: string, branchName: string, mainBranches: string[]): Promise<string[]> {
+async function fetchRemoteRefs(repoPath: string): Promise<void> {
+  const result = await runGit(repoPath, ['fetch', '--all', '--prune']);
+  if (result.code !== 0) {
+    throw new GitCommandError(['fetch', '--all', '--prune'], result, `拉取远程分支失败。${result.stderr.trim() || result.stdout.trim()}`);
+  }
+}
+
+async function getMainBranchRefs(repoPath: string, branches: BranchInfo[], requestedMainBranches: string[], includeRemoteRefs: boolean): Promise<MainBranchRef[]> {
+  const refs: MainBranchRef[] = [];
+  const localBranchNames = new Set(branches.map((branch) => branch.name));
+
+  for (const mainBranch of requestedMainBranches) {
+    if (localBranchNames.has(mainBranch)) {
+      refs.push({
+        displayName: mainBranch,
+        refName: `refs/heads/${mainBranch}`,
+        localName: mainBranch
+      });
+    }
+  }
+
+  if (includeRemoteRefs) {
+    refs.push(...await listRemoteMainBranchRefs(repoPath, requestedMainBranches));
+  }
+
+  return dedupeMainBranchRefs(refs);
+}
+
+async function listRemoteMainBranchRefs(repoPath: string, requestedMainBranches: string[]): Promise<MainBranchRef[]> {
+  const result = await mustRunGit(repoPath, [
+    'for-each-ref',
+    '--format=%(refname:short)%09%(refname)',
+    'refs/remotes'
+  ]);
+  const requestedMainBranchSet = new Set(requestedMainBranches);
+
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => parseRemoteRefLine(line, requestedMainBranchSet))
+    .filter(isDefined);
+}
+
+function parseRemoteRefLine(line: string, requestedMainBranches: Set<string>): MainBranchRef | undefined {
+  const [shortRefName, refName] = line.split('\t');
+  const slashIndex = shortRefName.indexOf('/');
+  if (slashIndex < 0 || !refName) {
+    return undefined;
+  }
+
+  const remoteBranchName = shortRefName.slice(slashIndex + 1);
+  if (!requestedMainBranches.has(remoteBranchName)) {
+    return undefined;
+  }
+
+  return {
+    displayName: shortRefName,
+    refName
+  };
+}
+
+function dedupeMainBranchRefs(refs: MainBranchRef[]): MainBranchRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    if (seen.has(ref.refName)) {
+      return false;
+    }
+
+    seen.add(ref.refName);
+    return true;
+  });
+}
+
+async function getMergedMainBranches(repoPath: string, branchName: string, mainBranches: MainBranchRef[]): Promise<string[]> {
   const mergedMainBranches: string[] = [];
+  const branchRefName = `refs/heads/${branchName}`;
 
   for (const mainBranch of mainBranches) {
-    const result = await runGit(repoPath, ['merge-base', '--is-ancestor', branchName, mainBranch]);
+    const result = await runGit(repoPath, ['merge-base', '--is-ancestor', branchRefName, mainBranch.refName]);
     if (result.code === 0) {
-      mergedMainBranches.push(mainBranch);
+      mergedMainBranches.push(mainBranch.displayName);
       continue;
     }
 
@@ -213,10 +299,14 @@ async function getMergedMainBranches(repoPath: string, branchName: string, mainB
       continue;
     }
 
-    throw new GitCommandError(['merge-base', '--is-ancestor', branchName, mainBranch], result);
+    throw new GitCommandError(['merge-base', '--is-ancestor', branchRefName, mainBranch.refName], result);
   }
 
   return mergedMainBranches;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function parseBranchLine(line: string, currentBranch: string, now: Date): BranchInfo {

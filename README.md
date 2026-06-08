@@ -10,7 +10,7 @@ Install from Visual Studio Marketplace:
 
 Open the link, click **Install**, and start using the command in VS Code.
 
-It checks local branches whose latest commit age reaches the configured threshold, shows whether each branch has already been merged into your configured main branches, and lets you safely delete selected branches with `git branch -d`.
+It checks local branches that have already been merged into your configured main branches, plus unmerged branches whose latest commit age reaches the configured threshold, and lets you safely delete selected branches with `git branch -d`.
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
@@ -22,8 +22,9 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   - Windows/Linux: `Ctrl+Alt+B`
 - Checks local branches only. Remote branches are not scanned or deleted.
 - Supports multiple main branch names, separated by commas. Default: `main,master`
-- Configurable stale threshold in hours. Default: `720` hours, equal to 30 days.
-- Merged stale branches are preselected in Quick Pick, so pressing Enter safely deletes them.
+- Merged branches are not limited by the stale threshold and are preselected in Quick Pick, so pressing Enter safely deletes them.
+- Unmerged branches are shown only after they reach the stale threshold. Default: `720` hours, equal to 30 days.
+- Optionally fetches remote refs before scanning and uses remote main branches, such as `origin/main`, for merge detection.
 - Unmerged stale branches require a second Quick Pick confirmation, without selecting the same branches again.
 - Supports include and exclude branch patterns with `*` wildcards.
 - Uses safe deletion first: `git branch -d -- <branch>`.
@@ -36,7 +37,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   "gitBranchCleanup.mainBranch": "main,master",
   "gitBranchCleanup.staleHours": 720,
   "gitBranchCleanup.includeBranchPatterns": "chore/*,feature/*",
-  "gitBranchCleanup.excludeBranchPatterns": "chore/keep-*"
+  "gitBranchCleanup.excludeBranchPatterns": "chore/keep-*",
+  "gitBranchCleanup.fetchRemoteBeforeScan": false
 }
 ```
 
@@ -78,6 +80,16 @@ Default:
 
 ```json
 ""
+```
+
+### `gitBranchCleanup.fetchRemoteBeforeScan`
+
+Whether to run `git fetch --all --prune` before scanning and include remote main branch refs in merge detection.
+
+Default:
+
+```json
+false
 ```
 
 ## Cleanup Behavior

@@ -10,7 +10,7 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
 
 打开链接后点击 **Install**，即可在 VS Code 中直接使用。
 
-插件会检查最后提交时间达到过期阈值的本地分支，展示它们是否已经合并到配置的主分支，并允许你通过 `git branch -d` 安全删除选中的分支。
+插件会检查已经合并到配置主分支的本地分支，以及最后提交时间达到过期阈值的未合并分支，并允许你通过 `git branch -d` 安全删除选中的分支。
 
 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -22,8 +22,9 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
   - Windows/Linux：`Ctrl+Alt+B`
 - 只检查本地分支，不检查或删除远程分支
 - 支持多个主分支名称，使用英文逗号分隔。默认：`main,master`
-- 过期阈值按小时配置。默认：`720` 小时，也就是 30 天
-- 已合并到主分支的过期分支会在 Quick Pick 中默认勾选，按回车即可安全删除
+- 已合并到主分支的分支不受过期时间限制，并会在 Quick Pick 中默认勾选，按回车即可安全删除
+- 未合并分支达到过期阈值后才会展示。默认：`720` 小时，也就是 30 天
+- 可选在检查前执行 `git fetch --all --prune`，并使用 `origin/main` 这类远程主分支参与已合并判断
 - 未合并到主分支的过期分支需要第二个 Quick Pick 确认，但不用再次勾选
 - 支持 include/exclude 分支模式，并支持 `*` 通配符
 - 优先执行安全删除：`git branch -d -- <branch>`
@@ -36,7 +37,8 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
   "gitBranchCleanup.mainBranch": "main,master",
   "gitBranchCleanup.staleHours": 720,
   "gitBranchCleanup.includeBranchPatterns": "chore/*,feature/*",
-  "gitBranchCleanup.excludeBranchPatterns": "chore/keep-*"
+  "gitBranchCleanup.excludeBranchPatterns": "chore/keep-*",
+  "gitBranchCleanup.fetchRemoteBeforeScan": false
 }
 ```
 
@@ -78,6 +80,16 @@ Git Branch Clean 是一个 VS Code 插件，用于检查并安全清理当前工
 
 ```json
 ""
+```
+
+### `gitBranchCleanup.fetchRemoteBeforeScan`
+
+检查前是否执行 `git fetch --all --prune`，并使用远程主分支引用参与已合并判断。
+
+默认：
+
+```json
+false
 ```
 
 ## 删除策略

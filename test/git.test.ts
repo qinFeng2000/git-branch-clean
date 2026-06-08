@@ -21,6 +21,11 @@ test('返回过期分支并标记是否已合并到主分支', async () => {
     await git(repo, ['checkout', 'main']);
     await git(repo, ['merge', '--no-ff', 'merged-old', '-m', 'merge merged-old'], daysAgo(70));
 
+    await git(repo, ['checkout', '-b', 'merged-fresh']);
+    await commitFile(repo, 'merged-fresh.txt', 'merged fresh', 'fresh merged branch', daysAgo(1));
+    await git(repo, ['checkout', 'main']);
+    await git(repo, ['merge', '--no-ff', 'merged-fresh', '-m', 'merge merged-fresh'], daysAgo(1));
+
     await git(repo, ['checkout', '-b', 'stale-unmerged']);
     await commitFile(repo, 'stale.txt', 'stale', 'stale branch', daysAgo(45));
     await git(repo, ['checkout', 'main']);
@@ -36,11 +41,13 @@ test('返回过期分支并标记是否已合并到主分支', async () => {
       now: NOW
     });
 
-    assert.deepEqual(branches.map((branch) => branch.name), ['merged-old', 'stale-unmerged']);
+    assert.deepEqual(branches.map((branch) => branch.name), ['merged-old', 'merged-fresh', 'stale-unmerged']);
     assert.equal(branches[0]?.isMerged, true);
     assert.deepEqual(branches[0]?.mergedMainBranches, ['main']);
-    assert.equal(branches[1]?.isMerged, false);
-    assert.equal(branches[1]?.ageHours, 45 * 24);
+    assert.equal(branches[1]?.isMerged, true);
+    assert.equal(branches[1]?.ageHours, 24);
+    assert.equal(branches[2]?.isMerged, false);
+    assert.equal(branches[2]?.ageHours, 45 * 24);
     assert.equal(branches[0]?.isCurrent, false);
   } finally {
     await removeRepo(repo);
@@ -226,6 +233,47 @@ test('配置多个主分支时允许部分主分支不存在', async () => {
   }
 });
 
+test('支持先拉取远程主分支并用远程主分支判断已合并', async () => {
+  const repo = await createRepo('main');
+  const remote = await createBareRepo();
+
+  try {
+    await commitFile(repo, 'base.txt', 'base', 'base', daysAgo(100));
+    await git(repo, ['remote', 'add', 'origin', remote]);
+    await git(repo, ['push', '-u', 'origin', 'main']);
+
+    await git(repo, ['checkout', '-b', 'remote-merged-fresh']);
+    await commitFile(repo, 'remote-merged.txt', 'remote merged', 'remote merged branch', daysAgo(1));
+    await git(repo, ['push', 'origin', 'remote-merged-fresh:main']);
+    await git(repo, ['checkout', 'main']);
+
+    const localOnlyBranches = await scanStaleBranches({
+      repoPath: repo,
+      mainBranches: ['main'],
+      fetchRemoteBeforeScan: false,
+      staleHours: 720,
+      now: NOW
+    });
+
+    assert.deepEqual(localOnlyBranches.map((branch) => branch.name), []);
+
+    const remoteAwareBranches = await scanStaleBranches({
+      repoPath: repo,
+      mainBranches: ['main'],
+      fetchRemoteBeforeScan: true,
+      staleHours: 720,
+      now: NOW
+    });
+
+    assert.deepEqual(remoteAwareBranches.map((branch) => branch.name), ['remote-merged-fresh']);
+    assert.deepEqual(remoteAwareBranches[0]?.mergedMainBranches, ['origin/main']);
+    assert.equal(remoteAwareBranches[0]?.isMerged, true);
+  } finally {
+    await removeRepo(repo);
+    await removeRepo(remote);
+  }
+});
+
 test('支持按 include 分支模式过滤检查范围', async () => {
   const repo = await createRepo('main');
 
@@ -293,6 +341,12 @@ async function createRepo(mainBranch: string): Promise<string> {
   await git(repo, ['checkout', '-b', mainBranch]);
   await git(repo, ['config', 'user.email', 'test@example.com']);
   await git(repo, ['config', 'user.name', 'Git Branch Cleanup Test']);
+  return repo;
+}
+
+async function createBareRepo(): Promise<string> {
+  const repo = await mkdtemp(path.join(tmpdir(), 'git-branch-cleanup-remote-'));
+  await git(repo, ['init', '--bare']);
   return repo;
 }
 
